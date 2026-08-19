@@ -22,8 +22,9 @@ Open the **shared** workspace (you have view access), find the `00-setup` notebo
 **save a copy of it into your own workspace**. Then open your copy and **Run all**. It
 imports the lab notebooks from GitHub into a `Labs` folder and shrinks your Spark settings
 so the whole room fits on the shared capacity.
-> **Done looks like:** a `Labs` folder appears holding `0-create-lab-models` and the two
-> lab notebooks, and the output shows `starter maxNodes : 1`.
+> **Done looks like:** the last cell says `Setup complete`, a `Labs` folder appears holding
+> `0-create-lab-models`, `lab02-storage-modes`, `lab07-diagnose-slow-visuals` and
+> `lab08-prove-the-improvement`, and the output shows `starter maxNodes : 1`.
 
 **No "Save a copy" on the menu?** Do not wait. In **your own** workspace create a new
 notebook, set the language to **Python** (not PySpark), paste this in, and run it. It
