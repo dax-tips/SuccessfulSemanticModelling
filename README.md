@@ -1,5 +1,8 @@
 # Start here - attendee setup
 
+📘 **[Download the Attendee Guide (PDF)](guides/Attendee-Guide.pdf)** - every module, every lab, and
+the reference tables, in one file. Grab it now; you will want it open all day and it is yours to keep.
+
 Everything today runs in a **browser**, on any OS, with no installs. Work through
 these steps in order. After each one, check the "Done looks like" line before moving on.
 
