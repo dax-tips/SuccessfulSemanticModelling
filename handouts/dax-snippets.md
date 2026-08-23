@@ -128,17 +128,15 @@ measurable rather than theoretical.
 
 ### The calendars are already in the model
 
-`0-create-lab-models` builds both of them on `'Date'` via TOM, so there is nothing to paste. Open
-`06 DAX + Calendar`, **Open data model**, then **TMDL view** and read them. The full definition, the
-reasoning behind every column choice, and the DMV check are in
-[module6-calendar.md](module6-calendar.md).
+`0-create-lab-models` builds both of them on `'Date'`, so there is nothing to paste. Open
+`06 DAX + Calendar`, **Open data model**, then **TMDL view**, and read them there. `Gregorian` has 7
+column groups, `Fiscal` has 6.
 
 Verified against TOM and real TMDL on 23 Aug:
 
 - A calendar is `calendar <Name>`, nested under `table`. A table can hold several.
 - Each group is `calendarColumnGroup = <unit>` with a `primaryColumn` and optional
-  `associatedColumn` lines. In TOM the group class is `TimeUnitColumnAssociation`, but the TMDL
-  serialisation shows no such distinction.
+  `associatedColumn` lines.
 - **Time units serialise lowercase**, compound units camelCase: `year`, `month`, `date`,
   `monthOfYear`, `quarterOfYear`, `dayOfWeek`, `dayOfMonth`. The API examples say `Years` and the
   parameter docs say `Year`. Both are wrong.
@@ -156,22 +154,7 @@ January is not fiscal month 1, and there is no fiscal month column to point at. 
 it omits `Year`, `Quarter` and `QuarterName`: all three assert Gregorian meanings that are false
 under a July start.
 
-### Checking the mapping is right, rather than hoping
-
-`'Date'[PriorYearDateKey]` is precomputed by the generator for the row-based TI demo, so it is a
-known-good answer to compare the calendar against. These two columns must agree:
-
-```dax
-EVALUATE
-SUMMARIZECOLUMNS (
-    'Date'[Year],
-    "Calendar LY",  [Sales LY],
-    "RowBased LY",  CALCULATE ( [Sales],
-                        TREATAS ( VALUES ( 'Date'[PriorYearDateKey] ), 'Date'[DateKey] ) )
-)
-```
-
-### The DAX side - CLOSED 23 Aug, verified on the tenant
+### How to reference a calendar in DAX
 
 **A calendar is referenced exactly like a table.** No table qualifier and no brackets. Single quotes
 are optional for a simple name and required if it contains spaces, the same rule as `Sales` versus
@@ -189,38 +172,77 @@ with two calendars defined, and returns classic results. Calendar time intellige
 call**, so nobody with a hundred existing measures has to rewrite anything. That is the migration
 story, and it is a good one.
 
-### The demo query: three notions of "last year", one measure shape
+### Queries to run
+
+Open the **DAX Perf Optimizer** notebook, run both cells, pick `06 DAX + Calendar` in the picker,
+then paste each query below. You get the result and the timings together.
+
+#### 1. Nothing existing breaks
 
 ```dax
 EVALUATE
 SUMMARIZECOLUMNS (
     'Date'[Year],
-    "Sales",      [Total Sales],
-    "LY classic", CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Date'[Date] ) ),
-    "LY Greg",    CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( Gregorian ) ),
-    "LY Fiscal",  CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( Fiscal ) )
+    "Sales",        [Total Sales],
+    "LY classic",   CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Date'[Date] ) ),
+    "LY Gregorian", CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Gregorian' ) )
 )
 ORDER BY 'Date'[Year]
 ```
 
-### Classic and calendar TI agree, with one documented exception
+The two LY columns come back **identical**. Measured 23 Aug on this model: identical to the cent on
+every row. Classic time intelligence keeps working exactly as it did, so defining a calendar costs no
+rewrites and there is nothing to migrate.
 
-Measured 23 Aug on this model: `SAMEPERIODLASTYEAR ( 'Date'[Date] )` and
-`SAMEPERIODLASTYEAR ( 'Gregorian' )` returned **identical values to the cent** on every row. Nothing
-existing breaks.
+#### 2. The year boundary moves - the one worth looking at
 
-The documented divergence is at date grain across a leap boundary. Shifting **29 Feb 2008** back one
-year gives **1 Mar 2007** under calendar TI, because it is the 60th day of the year, but
-**28 Feb 2007** under classic. For a 13-month calendar the documented workaround is
-`DATEADD ( Calendar, -13, month )`.
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[MonthYearSort],
+    'Date'[MonthYear],
+    "Sales",      [Total Sales],
+    "YTD Greg",   TOTALYTD ( [Total Sales], 'Gregorian' ),
+    "YTD Fiscal", TOTALYTD ( [Total Sales], 'Fiscal' )
+)
+ORDER BY 'Date'[MonthYearSort]
+```
 
-This is why the primary column mattered. The docs state calendar input returns "all primary tagged
-columns and all time related columns", so the primary is the column being shifted.
+Two running totals that reset at different points: **Gregorian resets in January, Fiscal resets in
+July**. Two sawtooths, six months out of phase.
 
-### The trap: the calendar must match the column you group by
+#### 3. What the calendar actually replaces
 
-Group by `'Date'[Year]` but ask for `SAMEPERIODLASTYEAR ( 'Fiscal' )` and you get roughly **double**
-the expected value. No error, no warning. Measured on this model, whose fiscal year starts 1 July:
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[MonthYearSort],
+    'Date'[MonthYear],
+    "YTD Fiscal old", TOTALYTD ( [Total Sales], 'Date'[Date], "6/30" ),
+    "YTD Fiscal new", TOTALYTD ( [Total Sales], 'Fiscal' )
+)
+ORDER BY 'Date'[MonthYearSort]
+```
+
+These match. Fiscal YTD was always reachable, by passing a year-end string that had to be retyped in
+every measure by whoever remembered it. The calendar puts that definition in the model, once, under a
+name.
+
+#### 4. The trap - the best demo in the module
+
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[Year],
+    "Sales",     [Total Sales],
+    "LY Greg",   CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Gregorian' ) ),
+    "LY Fiscal", CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Fiscal' ) )
+)
+ORDER BY 'Date'[Year]
+```
+
+`LY Fiscal` comes back at roughly **double** `LY Greg`. No error, no warning, and the number looks
+plausible. Measured on this model, whose fiscal year starts 1 July:
 
 | Gregorian year | fiscal years spanned | shifted back one | months with data | measured |
 |---|---|---|---|---|
@@ -228,11 +250,24 @@ the expected value. No error, no warning. Measured on this model, whose fiscal y
 | 2022 | FY22 + FY23 | FY21 + FY22 | 18 | 143.49M |
 | 2023+ | FY23 + FY24 | FY22 + FY23 | 24 | 192.0M |
 
-A Gregorian year straddles two fiscal years, so shifting each back one fiscal year produces a
-**24-month window**. The result is arithmetically correct and semantically meaningless.
+You grouped by Gregorian year and asked for the previous **fiscal** year. A Gregorian year straddles
+two July-start fiscal years, so shifting each back one produces a **24-month window**. The result is
+arithmetically correct and semantically meaningless.
+
+> **The calendar you name must match the calendar of the column you group by.**
 
 This is the failure mode the feature will cause in the wild: a report author picks a date field from
 a slicer, a measure author picked a calendar months earlier, and nothing connects the two.
+
+### One documented difference to know about
+
+Classic and calendar time intelligence disagree at date grain across a leap boundary. Shifting
+**29 Feb 2008** back one year gives **1 Mar 2007** under calendar time intelligence, because it is
+treated as the 60th day of the year, but **28 Feb 2007** under classic. For a calendar with a
+non-standard number of months the documented workaround is `DATEADD ( Calendar, -13, month )`.
+
+This is why the primary column mattered: the docs state calendar input returns "all primary tagged
+columns and all time related columns", so the primary is the column being shifted.
 
 ### Verifying a calendar landed, with no tooling
 
