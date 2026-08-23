@@ -10,31 +10,64 @@ Written against the models `0-create-lab-models` builds, so table and column nam
 
 ---
 
-## Module 4 - column splitting (attendees run this)
+## Module 4 - scaling techniques
 
-Runs against **their own** `01 Star Schema (fixed)`, so no access to the presenter model is needed.
-Both numbers must be identical. That is the point.
+Three levers, three presenter models. **You can run every query below in your own DAX Perf
+Optimizer notebook**, but tracing needs admin on the model, and you are Viewer on the presenter's
+workspace. So levers 1 and 2 are watch-along, and the last query in lever 3 runs on your own model.
+
+Read the **Trace details** grid, not the clock.
+
+### Lever 1: aggregations
+
+Model: `04 Scaling - Aggregation`. `Sales_agg` is grouped on `OrderDateKey` x `ProductKey` and has
+**no CustomerKey**. Watch the `Rewrite Attempted` row: `matchFound` versus `attemptFailed`.
+
+**1a. The hit.** Grouping by date, which the agg holds. Expect `matchFound`, and the scan reads
+`Sales_agg` rather than the 3M-row fact.
 
 ```dax
 EVALUATE
-ROW (
-    "Fat",   SUM ( Sales[NetAmount] ),
-    "Split", SUM ( Sales[NetAmount_Whole] ) + DIVIDE ( SUM ( Sales[NetAmount_Frac] ), 10000 )
-)
+SUMMARIZECOLUMNS ( 'date'[MonthYear], "Total Sales", [Total Sales] )
 ```
 
-Then, to see why it matters, point VertiPaq Analyzer at the model and compare the size of
-`NetAmount` (~2.2M distinct) against `NetAmount_Whole` + `NetAmount_Frac` (~1.6k + 10k).
+**1b. The hit again, at product grain.** `Brand` lives on the product dimension, which `Sales_agg`
+relates to, so the rewrite still lands. It is the **grain** that matters, not the literal column.
 
----
+```dax
+EVALUATE
+SUMMARIZECOLUMNS ( 'product'[Brand], "Total Sales", [Total Sales] )
+```
 
-## Module 4 - hybrid tables (presenter demo)
+**1c. The miss, and the headline of the whole lever.** Same measure, grouped by customer.
+`Sales_agg` has no customer column, so the rewrite is attempted and rejected and the query falls
+through to the DirectQuery fact. Expect `attemptFailed`, `failureReasons` naming
+`customer[Segment]`, and an SQL row appearing.
 
-Model: `04 Scaling - Hybrid`. It holds `OrderDateKey >= 20260101` in an **Import** partition and
-everything older in a **DirectQuery** partition. The DirectQuery partition carries a *data coverage
-definition*, so the engine can skip it entirely when a query cannot possibly need it.
+```dax
+EVALUATE
+SUMMARIZECOLUMNS ( 'customer'[Segment], "Total Sales", [Total Sales] )
+```
 
-All four queries share this shape, with the filter swapped in for `<FILTER>`:
+Nothing is broken. Anyone can demo a win; showing an aggregation that **cannot** help is what stops
+people building one nobody's queries can use.
+
+**1d. Optional second miss.** Only if someone asks whether it was something specific about `Segment`.
+
+```dax
+EVALUATE
+SUMMARIZECOLUMNS ( 'customer'[City], "Total Sales", [Total Sales] )
+```
+
+### Lever 2: hybrid tables
+
+Model: `04 Scaling - Hybrid`. `sales-hot` is **Import** (`OrderDateKey >= 20260101`), `sales-cold` is
+**DirectQuery** (older), and the cold partition carries
+`dataCoverageDefinition: RELATED('date'[DateKey]) < 20260101`.
+
+The coverage definition sits on the **date dimension**, because a range predicate has to sit on a
+dual table. So the query has to constrain `'date'` too. All five share this shape, with the filter
+swapped in for `<FILTER>`:
 
 ```dax
 EVALUATE
@@ -46,53 +79,93 @@ SUMMARIZECOLUMNS (
 )
 ```
 
-Watch the **DirectQuery event count** each time. That is the whole lesson.
+Watch whether **SQL rows appear**. That is the whole lesson: partition elimination depends on *how*
+you write the filter, not on having partitions.
 
-### 1. Hot slice only - expect 0 DirectQuery events
+**2a. Hot slice only.** Expect **no SQL rows**.
 
 ```dax
 FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= 20260101 )
 ```
 
-Filter the **date dimension, not the fact**. The coverage definition is written as
-`RELATED('date'[DateKey]) < 20260101`, because a range predicate has to sit on a dual table, and the
-engine can only match it if the query constrains that same column. A logically identical predicate on
-`'sales'[OrderDateKey]` still reads the DirectQuery partition, because there is nothing for it to
-match against. Worth running it both ways round.
+**2b. The same filter, wrong table.** Run straight after 2a. Logically identical, returns exactly the
+same numbers, but it constrains the **fact**. The coverage definition is written against
+`'date'[DateKey]`, so the engine has nothing to match and reads the DirectQuery partition anyway.
+Expect **SQL rows**. The filter looks perfectly reasonable, which is exactly why this catches people.
 
-### 2. Cold history - expect DirectQuery events > 0
+```dax
+FILTER ( VALUES ( 'sales'[OrderDateKey] ), 'sales'[OrderDateKey] >= 20260101 )
+```
+
+**2c. History.** Same column as 2a, opposite direction. The query really does need the cold half.
+Expect **SQL rows**. Correct behaviour, and worth saying out loud before someone reads it as a fault.
 
 ```dax
 FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] < 20260101 )
 ```
 
-The query genuinely needs the cold partition, so the engine goes and gets it. Correct behaviour, not
-a bug.
-
-### 3. The DATE() trap - expect DirectQuery events > 0
+**2d. The DATE() trap.** Dwell here. Logically identical to 2a, on the right column, and it returns
+the **right answer**. But `DATE()` yields a DATETIME, held as a DOUBLE (46023.0), so comparing it to
+an int64 key promotes the whole comparison to floating point. `>= 46023` is true for every yyyymmdd
+key, so it filters nothing **and** the coverage definition can no longer be matched. Expect **SQL
+rows**, and look for the `.000000` tail in the xmSQL. Compare integer to integer.
 
 ```dax
 FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= DATE ( 2026, 1, 1 ) )
 ```
 
-Logically identical to query 1, on the right column, and it **returns the right answer**. But `DATE()`
-returns a DATETIME, which the engine holds as a DOUBLE (46023.0 for 2026-01-01), so comparing it to an
-int64 key promotes the whole comparison to floating point. The predicate becomes `>= 46023`, true for
-every yyyymmdd key. It filters nothing, and the coverage definition can no longer be matched.
-
-Right answer, none of the benefit, no warning. This is the one that quietly costs people money.
-
-### 4. Filtering a different column entirely - expect 0 DirectQuery events
+**2e. The good one, and the point of the lever.** No filter on the fact, and none on `DateKey`
+either. `'date'` is a **dual** table, so the engine resolves `Year = 2026` in memory, turns it into a
+range of DateKeys, and concludes the cold partition cannot contribute. Expect **no SQL rows**.
 
 ```dax
 TREATAS ( { 2026 }, 'date'[Year] )
 ```
 
-No filter on the fact, and not even on the coverage column. `'date'` is a **dual** table, so the engine
-resolves `Year = 2026` against its in-memory copy, turns that into a range of DateKeys, and sees that
-the cold partition cannot contribute.
+Put 2e next to 2b: one filters the fact and fails, one never mentions `DateKey` and succeeds. It is
+about which table the engine can reason over, not which column you happened to type.
 
-The one to dwell on: the filter and the coverage definition do not share a column, and it still works.
+### Lever 3: column splitting
+
+Model: `04 Scaling - Split Columns`. Three tables, the same 3,000,000 rows, the same answer.
+
+**3a. Prove the split is lossless.** `Difference` must be **exactly 0**. A blank means the Import
+tables are empty.
+
+```dax
+EVALUATE
+ROW (
+    "Fat",         [Net Sales (fat)],
+    "Fat no hier", [Net Sales (fat, no hierarchy)],
+    "Split",       [Net Sales (split)],
+    "Difference",  [Difference]
+)
+```
+
+Then open VertiPaq Analyzer and sort by Total Size. Walk **Cardinality, then Hier Size, then
+Dictionary, then Total**, in that order, so the mechanism lands before the headline number. Hier Size
+falls 8,964,792 to 46,640 (192x) and cardinality falls 2,241,197 to 11,657 (also 192x). Hier Size
+*is* the sorted index, so it tracks cardinality almost exactly.
+
+Be honest about where the win comes from. Most of the fat column is that hierarchy, and it can be
+removed for nothing with `isAvailableInMDX = false`. Turning the hierarchy off is ~1.7x and costs you
+nothing; splitting the column is 3.45x and costs you a measure and a refresh. Data barely moves
+(12.0 MB to 6.0 MB), because you still store one value per row whatever the cardinality. **Low
+cardinality buys you the index, not the data.**
+
+**3b. This one runs on YOUR model.** `01 Star Schema (fixed)`, no presenter access needed, because
+your `Sales` table carries the same three columns. Both numbers must be identical. That is the point.
+
+```dax
+EVALUATE
+ROW (
+    "Fat",   SUM ( Sales[NetAmount] ),
+    "Split", SUM ( Sales[NetAmount_Whole] ) + DIVIDE ( SUM ( Sales[NetAmount_Frac] ), 10000 )
+)
+```
+
+Then point VertiPaq Analyzer at your own model and compare the size of `NetAmount` (~2.2M distinct)
+against `NetAmount_Whole` + `NetAmount_Frac` (~1.6k + 10k).
 
 ---
 
