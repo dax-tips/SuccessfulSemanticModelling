@@ -236,8 +236,7 @@ SUMMARIZECOLUMNS (
     'Date'[MonthYearSort],
     'Date'[MonthYear],
     "Ordered", [Total Sales],
-    "Shipped", CALCULATE ( [Total Sales],
-                           USERELATIONSHIP ( Sales[ShipDateKey], 'Date'[DateKey] ) )
+    "Shipped", [Sales by Ship Date]
 )
 ORDER BY 'Date'[MonthYearSort]
 ```
