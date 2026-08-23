@@ -28,6 +28,74 @@ Then, to see why it matters, point VertiPaq Analyzer at the model and compare th
 
 ---
 
+## Module 4 - hybrid tables (presenter demo)
+
+Model: `04 Scaling - Hybrid`. It holds `OrderDateKey >= 20260101` in an **Import** partition and
+everything older in a **DirectQuery** partition. The DirectQuery partition carries a *data coverage
+definition*, so the engine can skip it entirely when a query cannot possibly need it.
+
+All four queries share this shape, with the filter swapped in for `<FILTER>`:
+
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'date'[MonthYear],
+    'product'[Brand],
+    <FILTER>,
+    "Total Sales", [Total Sales]
+)
+```
+
+Watch the **DirectQuery event count** each time. That is the whole lesson.
+
+### 1. Hot slice only - expect 0 DirectQuery events
+
+```dax
+FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= 20260101 )
+```
+
+Filter the **date dimension, not the fact**. The coverage definition is written as
+`RELATED('date'[DateKey]) < 20260101`, because a range predicate has to sit on a dual table, and the
+engine can only match it if the query constrains that same column. A logically identical predicate on
+`'sales'[OrderDateKey]` still reads the DirectQuery partition, because there is nothing for it to
+match against. Worth running it both ways round.
+
+### 2. Cold history - expect DirectQuery events > 0
+
+```dax
+FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] < 20260101 )
+```
+
+The query genuinely needs the cold partition, so the engine goes and gets it. Correct behaviour, not
+a bug.
+
+### 3. The DATE() trap - expect DirectQuery events > 0
+
+```dax
+FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= DATE ( 2026, 1, 1 ) )
+```
+
+Logically identical to query 1, on the right column, and it **returns the right answer**. But `DATE()`
+returns a DATETIME, which the engine holds as a DOUBLE (46023.0 for 2026-01-01), so comparing it to an
+int64 key promotes the whole comparison to floating point. The predicate becomes `>= 46023`, true for
+every yyyymmdd key. It filters nothing, and the coverage definition can no longer be matched.
+
+Right answer, none of the benefit, no warning. This is the one that quietly costs people money.
+
+### 4. Filtering a different column entirely - expect 0 DirectQuery events
+
+```dax
+TREATAS ( { 2026 }, 'date'[Year] )
+```
+
+No filter on the fact, and not even on the coverage column. `'date'` is a **dual** table, so the engine
+resolves `Year = 2026` against its in-memory copy, turns that into a range of DateKeys, and sees that
+the cold partition cannot contribute.
+
+The one to dwell on: the filter and the coverage definition do not share a column, and it still works.
+
+---
+
 ## Module 6 - the five patterns
 
 Model: `06 DAX + Calendar`. Add these as measures via web modelling or the TMDL editor.
