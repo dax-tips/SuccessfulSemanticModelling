@@ -48,6 +48,49 @@ RETURN DIVIDE ( Curr - Prior, Prior )
 Watch: `SAMEPERIODLASTYEAR` needs a **marked date table**. It already is in this model, so if someone
 builds their own star in Module 1 and skips that step, this is where it bites them.
 
+### 1b. Role-playing dates - using the inactive relationship
+
+You built this relationship in Module 1: `Sales[ShipDateKey]` to `'Date'[DateKey]`, **inactive**.
+This is how you use it.
+
+```dax
+Sales by Ship Date =
+CALCULATE (
+    [Total Sales],
+    USERELATIONSHIP ( Sales[ShipDateKey], 'Date'[DateKey] )
+)
+```
+
+Ordered against shipped, side by side, off one `Date` table:
+
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[MonthYearSort],
+    'Date'[MonthYear],
+    "Ordered", [Total Sales],
+    "Shipped", CALCULATE ( [Total Sales],
+                           USERELATIONSHIP ( Sales[ShipDateKey], 'Date'[DateKey] ) )
+)
+ORDER BY 'Date'[MonthYearSort]
+```
+
+The teaching points:
+
+- `USERELATIONSHIP` swaps which relationship is active **for that one `CALCULATE` only**. It changes
+  nothing about the model, so the two columns above coexist in the same query.
+- Both columns read the **same** `Date` table. The alternative is a second date dimension
+  (`ShipDate`), which costs memory, has to be kept in step, and forces every measure and every slicer
+  to pick a side. One conformed dimension with a spare inactive relationship is nearly always better.
+- Ship date is order date plus 0 to 7 days, so `Shipped` lags `Ordered` and the gap shows at month
+  boundaries. **Grand totals are identical**: same rows, different date attribution.
+- The generator clamps ship dates to the last day of the calendar, so the final month is slightly
+  inflated. That is an artefact of the data, not a lesson.
+
+Watch: `USERELATIONSHIP` needs the relationship to **exist and be inactive**. If Module 1 step 3 was
+skipped, or the relationship was left active, this errors rather than quietly giving you the wrong
+number, which is the kinder of the two failure modes.
+
 ### 2. Running total
 
 ```dax
@@ -119,8 +162,9 @@ All three answer the same question on this data. The teaching points:
   a headline tile that nobody reconciles to the penny. Not legitimate on anything a finance team signs.
 - Note the function is `APPROXIMATEDISTINCTCOUNT`, not `APPROXDISTINCTCOUNT`.
 
-`Sales[OrderNumber]` has **5,000,000 distinct values** over 100M rows here, so the difference is
-measurable rather than theoretical.
+`Sales[OrderNumber]` is drawn from 1,000,000 possible order numbers across 3M rows, so roughly **1M
+distinct**, about three lines per order. Enough cardinality that the difference is measurable rather
+than theoretical.
 
 ---
 
