@@ -66,26 +66,22 @@ Model: `04 Scaling - Hybrid`. `sales-hot` is **Import** (`OrderDateKey >= 202601
 `dataCoverageDefinition: RELATED('date'[DateKey]) < 20260101`.
 
 The coverage definition sits on the **date dimension**, because a range predicate has to sit on a
-dual table. So the query has to constrain `'date'` too. All five share this shape, with the filter
-swapped in for `<FILTER>`:
+dual table. So the query has to constrain `'date'` too.
+
+Each query below is complete, copy and paste it whole. **Only the filter line differs between them**,
+which is the entire lesson: partition elimination depends on *how* you write the filter, not on having
+partitions. Watch whether **SQL rows appear** in the trace.
+
+**2a. Hot slice only.** Expect **no SQL rows**.
 
 ```dax
 EVALUATE
 SUMMARIZECOLUMNS (
     'date'[MonthYear],
     'product'[Brand],
-    <FILTER>,
+    FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= 20260101 ),
     "Total Sales", [Total Sales]
 )
-```
-
-Watch whether **SQL rows appear**. That is the whole lesson: partition elimination depends on *how*
-you write the filter, not on having partitions.
-
-**2a. Hot slice only.** Expect **no SQL rows**.
-
-```dax
-FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= 20260101 )
 ```
 
 **2b. The same filter, wrong table.** Run straight after 2a. Logically identical, returns exactly the
@@ -94,14 +90,26 @@ same numbers, but it constrains the **fact**. The coverage definition is written
 Expect **SQL rows**. The filter looks perfectly reasonable, which is exactly why this catches people.
 
 ```dax
-FILTER ( VALUES ( 'sales'[OrderDateKey] ), 'sales'[OrderDateKey] >= 20260101 )
+EVALUATE
+SUMMARIZECOLUMNS (
+    'date'[MonthYear],
+    'product'[Brand],
+    FILTER ( VALUES ( 'sales'[OrderDateKey] ), 'sales'[OrderDateKey] >= 20260101 ),
+    "Total Sales", [Total Sales]
+)
 ```
 
 **2c. History.** Same column as 2a, opposite direction. The query really does need the cold half.
 Expect **SQL rows**. Correct behaviour, and worth saying out loud before someone reads it as a fault.
 
 ```dax
-FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] < 20260101 )
+EVALUATE
+SUMMARIZECOLUMNS (
+    'date'[MonthYear],
+    'product'[Brand],
+    FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] < 20260101 ),
+    "Total Sales", [Total Sales]
+)
 ```
 
 **2d. The DATE() trap.** Dwell here. Logically identical to 2a, on the right column, and it returns
@@ -111,7 +119,13 @@ key, so it filters nothing **and** the coverage definition can no longer be matc
 rows**, and look for the `.000000` tail in the xmSQL. Compare integer to integer.
 
 ```dax
-FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= DATE ( 2026, 1, 1 ) )
+EVALUATE
+SUMMARIZECOLUMNS (
+    'date'[MonthYear],
+    'product'[Brand],
+    FILTER ( VALUES ( 'date'[DateKey] ), 'date'[DateKey] >= DATE ( 2026, 1, 1 ) ),
+    "Total Sales", [Total Sales]
+)
 ```
 
 **2e. The good one, and the point of the lever.** No filter on the fact, and none on `DateKey`
@@ -119,7 +133,13 @@ either. `'date'` is a **dual** table, so the engine resolves `Year = 2026` in me
 range of DateKeys, and concludes the cold partition cannot contribute. Expect **no SQL rows**.
 
 ```dax
-TREATAS ( { 2026 }, 'date'[Year] )
+EVALUATE
+SUMMARIZECOLUMNS (
+    'date'[MonthYear],
+    'product'[Brand],
+    TREATAS ( { 2026 }, 'date'[Year] ),
+    "Total Sales", [Total Sales]
+)
 ```
 
 Put 2e next to 2b: one filters the fact and fails, one never mentions `DateKey` and succeeds. It is
