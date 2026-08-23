@@ -173,14 +173,20 @@ nothing; splitting the column is 3.45x and costs you a measure and a refresh. Da
 (12.0 MB to 6.0 MB), because you still store one value per row whatever the cardinality. **Low
 cardinality buys you the index, not the data.**
 
-**3b. This one runs on YOUR model.** `01 Star Schema (fixed)`, no presenter access needed, because
-your `Sales` table carries the same three columns. Both numbers must be identical. That is the point.
+**3b. This one runs on YOUR model.** `01 Star Schema (fixed)`, or the `My Star Schema` you built in
+Lab 1b, no presenter access needed, because your `Sales` table carries the same three columns.
+`Difference` should be zero **to the cent**. A residue around `0.0000002` is expected and is not data
+loss: `Fat` sums three million doubles, so the answer depends on summation order, while `Split` is
+integer maths and only rounds once at the end.
 
 ```dax
 EVALUATE
-ROW (
-    "Fat",   SUM ( Sales[NetAmount] ),
-    "Split", SUM ( Sales[NetAmount_Whole] ) + DIVIDE ( SUM ( Sales[NetAmount_Frac] ), 10000 )
+ADDCOLUMNS (
+    ROW (
+        "Fat",   SUM ( Sales[NetAmount] ),
+        "Split", SUM ( Sales[NetAmount_Whole] ) + DIVIDE ( SUM ( Sales[NetAmount_Frac] ), 10000 )
+    ),
+    "Difference", [Fat] - [Split]
 )
 ```
 
