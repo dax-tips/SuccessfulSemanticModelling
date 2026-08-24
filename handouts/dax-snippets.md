@@ -355,7 +355,7 @@ only when it can prove the fast path is valid:
 Orders =
 VAR GrainIsSafe =
     NOT ISCROSSFILTERED ( 'product' )
-        && NOT ISFILTERED ( sales[ProductKey] )
+        && NOT ISFILTERED ( sales )
 RETURN
     IF (
         GrainIsSafe,
@@ -365,8 +365,12 @@ RETURN
 ```
 
 `ISFILTERED` and `ISCROSSFILTERED` inspect the filter context in the formula engine. They scan
-nothing and cost effectively nothing, so the test is cheap — but see **Validation 2** below, it is
-not complete.
+nothing and cost effectively nothing, so the test is cheap. It takes **two** of them, and for
+different reasons: `ISFILTERED ( sales )` catches a filter placed directly on any fact column, but it
+never sees a slicer on the product dimension — only `ISCROSSFILTERED ( 'product' )` does. Testing
+`ISCROSSFILTERED ( sales )` instead would be worse than useless, because date, customer and territory
+all cross-filter the fact legitimately and the fast path would never run. Validation 2 proves both
+halves hold.
 
 **The demo query — one query, four toggles.** Everything in the module comes off this one. Comment
 lines in and out live, so the room watches Server Timings change shape rather than four separate
@@ -431,7 +435,8 @@ RETURN
 `mismatched` must be **0**. On 23 Aug this caught a real bug: the aggregate and the fact disagreed
 about 80% of orders while per-date counts stayed within 3%, so a totals-only check saw nothing wrong.
 
-**Validation 2 — where the guard leaks.** The routing test is an allowlist, and allowlists rot.
+**Validation 2 — prove the guard covers the fact table, not just the dimensions.** A routing test is
+an allowlist, and allowlists rot. This is the check that catches it.
 
 ```dax
 EVALUATE
@@ -443,9 +448,13 @@ RETURN
     )
 ```
 
+Both numbers must agree, at **282**.
+
 `ShipDateKey` is a column on the fact, not a dimension, so `ISCROSSFILTERED ( 'product' )` never sees
-it. Measured **282** against **5,000,000**. Widening the test to `NOT ISFILTERED ( sales )` closes it,
-and is verified against `Quantity`, `ShipDateKey` and `SalesAmount`.
+it. An earlier, narrower guard tested only `sales[ProductKey]` and returned **5,000,000** here instead
+of 282 — not slow, silently wrong, and no totals-level check would have caught it. Widening the direct
+test from one column to the whole table closes it, verified against `Quantity`, `ShipDateKey` and
+`SalesAmount`.
 
 Two things to know before running these:
 
