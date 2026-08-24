@@ -169,9 +169,24 @@ ROW (
 ```
 
 Then open VertiPaq Analyzer and sort by Total Size. Walk **Cardinality, then Hier Size, then
-Dictionary, then Total**, in that order, so the mechanism lands before the headline number. Hier Size
-falls 8,964,792 to 46,640 (192x) and cardinality falls 2,241,197 to 11,657 (also 192x). Hier Size
-*is* the sorted index, so it tracks cardinality almost exactly.
+Dictionary, then Total**, in that order, so the mechanism lands before the headline number.
+
+**The numbers to expect**, all three tables holding the same 3,000,000 rows:
+
+| Table | Cardinality | Hier Size | Total Size |
+|---|---|---|---|
+| `Sales_fat` | 2,241,197 | 8,964,792 | 20,965,344 |
+| `Sales_fat_nohier` | 2,241,197 | 0 | 12,000,552 |
+| `Sales_split` | 10,000 + 1,657 = **11,657** | 46,640 | 6,077,568 |
+
+Hier Size falls 192x and cardinality falls 192x. Hier Size *is* the sorted index, so it tracks
+cardinality almost exactly.
+
+> **If VertiPaq Analyzer in the notebook shows a different cardinality for `Sales_fat_nohier`, it is
+> wrong.** Seen on 24 Aug 2026 reporting **17,214,416** \u2014 which is impossible, because the table only
+> has 3,000,000 rows and cardinality can never exceed row count. It only misreads the table whose
+> hierarchy has been turned off. DAX Studio gets it right, and so does asking directly:
+> `EVALUATE ROW ( "distinct", DISTINCTCOUNT ( Sales_fat_nohier[NetAmount] ) )`.
 
 Be honest about where the win comes from. Most of the fat column is that hierarchy, and it can be
 removed for nothing with `isAvailableInMDX = false`. Turning the hierarchy off is ~1.7x and costs you
