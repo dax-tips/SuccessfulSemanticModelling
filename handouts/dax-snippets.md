@@ -322,8 +322,14 @@ Orders (approx) = APPROXIMATEDISTINCTCOUNT ( Sales[OrderNumber] )
 
 All three answer the same question on this data. The teaching points:
 
-- `COUNTROWS ( VALUES ( ... ) )` is safe **when the column has no blanks**, and often cheaper. On a
-  column with blanks it differs from `DISTINCTCOUNT`, which is why it is not a blanket substitute.
+- `COUNTROWS ( VALUES ( ... ) )` is **not** the cheaper option people assume it is. The engine rewrites
+  it to the same distinct count under the covers, so you get the same plan and the same cost. The only
+  real difference is blanks: on a column containing blanks it disagrees with `DISTINCTCOUNT`. Pick
+  whichever reads better and do not expect a saving.
+- **The genuine lever is to stop asking for a distinct count at all.** `COUNTROWS` over a table that
+  already holds one row per order is a row count, not a distinct operation, which is a different class
+  of work entirely. That is a modelling change rather than a measure change. See
+  [Use COUNTROWS for distinct counts](https://dax.tips/2026/08/07/distinctcount-into-countrows/).
 - `APPROXIMATEDISTINCTCOUNT` trades exactness for speed. Legitimate on a high-cardinality column feeding
   a headline tile that nobody reconciles to the penny. Not legitimate on anything a finance team signs.
 - Note the function is `APPROXIMATEDISTINCTCOUNT`, not `APPROXDISTINCTCOUNT`.
@@ -331,6 +337,125 @@ All three answer the same question on this data. The teaching points:
 `Sales[OrderNumber]` is drawn from 1,000,000 possible order numbers across 3M rows, so roughly **1M
 distinct**, about three lines per order. Enough cardinality that the difference is measurable rather
 than theoretical.
+
+#### Run these yourself, against `06 DAX - Distinct Count Agg`
+
+A separate presenter model in the shared workspace, built for exactly this. `sales` is **100M rows,
+DirectQuery**. `sales_xl_orderagg` is **5M rows, Import and hidden**, one row per order. You have
+build and write on it, so these run from DAX Studio or the **DAX Perf Optimizer** notebook.
+
+Turn on Server Timings with **Clear Cache on Run**, and watch the *event types* rather than just the
+totals. A **SQL** event means the 100M detail was queried. A plain **Scan** means it was not.
+
+The model carries `[Distinct Orders]` and `[Sales Lines]` as plain baselines, plus the one that does
+the work. `[Orders]` is the routing measure from step four of the blog post — it takes the fast path
+only when it can prove the fast path is valid:
+
+```dax
+Orders =
+VAR GrainIsSafe =
+    NOT ISCROSSFILTERED ( 'product' )
+        && NOT ISFILTERED ( sales[ProductKey] )
+RETURN
+    IF (
+        GrainIsSafe,
+        COUNTROWS ( 'sales_xl_orderagg' ),      -- row count over 5M orders
+        DISTINCTCOUNT ( sales[OrderNumber] )    -- genuine distinct count over 100M lines
+    )
+```
+
+`ISFILTERED` and `ISCROSSFILTERED` inspect the filter context in the formula engine. They scan
+nothing and cost effectively nothing, so the test is cheap — but see **Validation 2** below, it is
+not complete.
+
+**The demo query — one query, four toggles.** Everything in the module comes off this one. Comment
+lines in and out live, so the room watches Server Timings change shape rather than four separate
+queries scroll past.
+
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'date'[Date],
+//  'product'[Brand],
+//  "Actual", DISTINCTCOUNT ( sales[OrderNumber] ),
+    "Orders", [Orders],
+    "Other",  DISTINCTCOUNT ( 'sales_xl_orderagg'[OrderNumber] )
+)
+```
+
+| Toggle | Reads | Server Timings |
+|---|---|---|
+| `"Orders"` | 5M agg, `COUNTROWS` | one **Scan**, `COUNT ( )`, ~17 ms |
+| `"Other"` | 5M agg, `DISTINCTCOUNT` | one **Scan**, `DCOUNT ( )`, ~1,220 ms |
+| `"Actual"` | 100M detail, `DISTINCTCOUNT` | a **SQL** event against the warehouse |
+| `'product'[Brand]` | breaks the grain | `[Orders]` abandons the fast path |
+
+**Start with `Orders` and `Other` only.** Same table, same join to `date`, same 2,191 rows out. The
+*only* difference is the aggregation function, and it is **72x**:
+
+```
+DCOUNT ( 'sales xl orderagg'[OrderNumber] )     1,220 ms    est. 35,056 bytes
+COUNT ( )                                          17 ms    est. 17,552 bytes
+```
+
+The byte estimate halves because `COUNT()` never reads `OrderNumber` at all, while `DCOUNT` has to
+carry every value in order to merge the sets. Nobody can put this one down to the smaller table,
+because both sides *are* the smaller table.
+
+**Then uncomment `"Actual"`.** A SQL event appears and the query slows to the DirectQuery round trip —
+3,183 ms against 424 ms, measured 23 Aug over 2,191 rows. The ratio is not the interesting part. The
+interesting part is that without it there is **no SQL event at all**: the 100M table is never touched.
+
+**Then uncomment `'product'[Brand]`.** The grain table has no product column and cannot have one — an
+order holds several products. `[Orders]` sees the product filter, abandons the fast path and falls
+back to the genuine distinct count. The numbers stay correct; the speed goes away.
+
+**Validation 1 — prove it across every date at once.** ~3 seconds, and this is the check that
+actually matters.
+
+```dax
+EVALUATE
+VAR t =
+    SUMMARIZECOLUMNS (
+        'date'[Date],
+        "a", DISTINCTCOUNT ( sales[OrderNumber] ),
+        "o", [Orders]
+    )
+RETURN
+    ROW (
+        "dates", COUNTROWS ( t ),
+        "mismatched", COUNTROWS ( FILTER ( t, [a] <> [o] ) ) + 0
+    )
+```
+
+`mismatched` must be **0**. On 23 Aug this caught a real bug: the aggregate and the fact disagreed
+about 80% of orders while per-date counts stayed within 3%, so a totals-only check saw nothing wrong.
+
+**Validation 2 — where the guard leaks.** The routing test is an allowlist, and allowlists rot.
+
+```dax
+EVALUATE
+VAR k = MINX ( ALL ( sales[ShipDateKey] ), sales[ShipDateKey] )
+RETURN
+    ROW (
+        "Actual", CALCULATE ( DISTINCTCOUNT ( sales[OrderNumber] ), sales[ShipDateKey] = k ),
+        "Orders", CALCULATE ( [Orders], sales[ShipDateKey] = k )
+    )
+```
+
+`ShipDateKey` is a column on the fact, not a dimension, so `ISCROSSFILTERED ( 'product' )` never sees
+it. Measured **282** against **5,000,000**. Widening the test to `NOT ISFILTERED ( sales )` closes it,
+and is verified against `Quantity`, `ShipDateKey` and `SalesAmount`.
+
+Two things to know before running these:
+
+- **Only the `"Actual"` toggle hits the 100M DirectQuery table**, and so does Validation 1. With ~53
+  people in the room, demo those from the front or stagger them. Everything else reads the 5M Import
+  aggregate and is cheap enough to run all at once.
+- **This model deliberately has no `alternateOf` aggregation mapping.** `"Actual"` therefore always
+  goes to the 100M detail as a SQL event. The `"Other"` column makes the DCOUNT-vs-COUNTROWS point
+  directly instead, which needs no aggregation machinery and cannot be muddied by a rewrite that did
+  or did not match.
 
 ---
 
