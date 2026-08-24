@@ -629,9 +629,9 @@ inconsistent TimeUnit associations in multiple calendar objects owned by table '
 
 ## Module 7 - diagnosing slow visuals
 
-Model: `07 Slow Visual Triage`. Everything below uses `DEFINE MEASURE`, so the expensive logic is
-**on screen in the query** rather than hidden in the model. Nobody has to take your word for what
-makes it slow.
+Model: `07 Slow Visual Triage`. The queries are deliberately short — they call the model's own
+measures, listed below so the expensive logic is still visible. `DEFINE MEASURE` comes in at **step
+3**, where it belongs: trying a rewrite without writing it to the model.
 
 The same queries run in three places, so nobody is locked out:
 
@@ -650,9 +650,6 @@ without writing any of them to it, and only commit the one that won.
 > adds the `AggregateTableRewriteQuery` trace event, so it can show *why* an aggregation missed rather
 > than only that it did.
 
-The model also carries `[Slow Sales (FE)]` and `[Slow Sales (SE)]` already, if you would rather call
-them than redefine them.
-
 ### The loop
 
 1. **Grab a slow query** from the three below.
@@ -663,6 +660,17 @@ them than redefine them.
 
 Steps 3 and 4 are the whole point: you can try five variants against the real model without writing
 any of them to it. Only step 5 changes anything, and by then you already know it works.
+
+### The measures already in the model
+
+All on the `Sales` table. Read these once and the queries below need no explanation.
+
+| Measure | Definition |
+|---|---|
+| `[Total Sales]` | `SUM ( Sales[SalesAmount] )` |
+| `[Order Count]` | `DISTINCTCOUNT ( Sales[OrderNumber] )` |
+| `[Slow Sales (FE)]` | `SUMX ( VALUES ( Sales[OrderNumber] ), CALCULATE ( SUM ( Sales[SalesAmount] ) ) )` |
+| `[Slow Sales (SE)]` | `SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] * ( 1 - Sales[Discount] ) )` |
 
 ### The triage order
 
@@ -676,20 +684,15 @@ Visual → DAX → model → source. Read the split **before** touching anything
 ### 1. FE-bound — the same answer, two ways
 
 ```dax
-DEFINE
-    MEASURE Sales[Slow (FE)] =
-        SUMX ( VALUES ( Sales[OrderNumber] ), CALCULATE ( SUM ( Sales[SalesAmount] ) ) )
 EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow (FE)] )
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow Sales (FE)] )
 ```
 
 Then the cheap one, which returns the identical number:
 
 ```dax
-DEFINE
-    MEASURE Sales[Fast] = SUM ( Sales[SalesAmount] )
 EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Fast] )
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Total Sales] )
 ```
 
 `CALCULATE` inside `SUMX ( VALUES ( ... ) )` forces a **context transition per order number**, about a
@@ -699,11 +702,8 @@ model tuning fixes this one — only the DAX does.
 ### 2. SE-bound — a row-level expression over the whole fact
 
 ```dax
-DEFINE
-    MEASURE Sales[Slow (SE)] =
-        SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] * ( 1 - Sales[Discount] ) )
 EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow (SE)] )
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow Sales (SE)] )
 ```
 
 Three columns must be materialised for every row before anything can be summed. Watch the scan's
@@ -713,14 +713,40 @@ model problem wearing a DAX costume, which is the line the whole day opens on.
 ### 3. Cardinality — the Module 6 lesson, seen from the diagnosis side
 
 ```dax
-DEFINE
-    MEASURE Sales[Orders] = DISTINCTCOUNT ( Sales[OrderNumber] )
 EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Orders", [Orders] )
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Orders", [Order Count] )
 ```
 
 SE-bound, and the cost tracks the **cardinality** of `OrderNumber`, not the row count. Same problem
 Module 6 solved by modelling; here the trace is what tells you to go and look.
+
+### Step 3 — try a rewrite without touching the model
+
+This is where `DEFINE MEASURE` earns its place. Put your candidate next to the original so you can see
+both the numbers agree and the split move, in one run:
+
+```dax
+DEFINE
+    MEASURE Sales[My Fix] = SUM ( Sales[SalesAmount] )
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[MonthYear],
+    "Slow", [Slow Sales (FE)],
+    "Mine", [My Fix]
+)
+```
+
+> **Use a name the model does not already have.** `DEFINE MEASURE` cannot redefine an existing
+> measure — `Sales[Slow Sales (FE)]` would error rather than shadow it. `[My Fix]` is deliberately
+> throwaway.
+
+> **Expect the last few decimal places to differ.** `[Slow Sales (FE)]` returns `7396311.049999972`
+> where `SUM` returns `7396311.050000001`. Summing a million partial results in a different order
+> gives a different floating-point tail. That is not your rewrite being wrong — compare to the cent,
+> not to the fifteenth digit.
+
+Iterate here as many times as you like. Nothing is written to the model until step 5, when you paste
+the winning expression into the measure you were fixing.
 
 ### What to land
 
