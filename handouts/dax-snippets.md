@@ -730,6 +730,54 @@ SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Orders", [Order Count] )
 SE-bound, and the cost tracks the **cardinality** of `OrderNumber`, not the row count. Same problem
 Module 6 solved by modelling; here the trace is what tells you to go and look.
 
+### 4. The model lever — a relationship that lies
+
+Two ways to ask *how many territories transacted in the rolling 180 days*. They return **identical
+numbers on every row** — verified across all 72 months, zero mismatches.
+
+```dax
+DEFINE
+MEASURE Sales[Distinct Territories] =
+    CALCULATE (
+        DISTINCTCOUNT ( Sales[TerritoryKey] ),
+        FILTER (
+            ALL ( 'Date' ),
+            'Date'[Date] >= MAX ( 'Date'[Date] ) - 180
+                && 'Date'[Date] < MAX ( 'Date'[Date] )
+        )
+    )
+
+MEASURE Sales[Distinct Territories (optimized)] =
+    VAR myDate = MAX ( 'Date'[Date] )
+    RETURN
+        CALCULATE (
+            SUMX ( DISTINCT ( Sales[TerritoryKey] ), 1 ),
+            DATESBETWEEN ( 'Date'[Date], myDate - 180, myDate - 1 )
+        )
+
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[MonthYear],
+    "orig", [Distinct Territories],
+    "opt",  [Distinct Territories (optimized)]
+)
+```
+
+**Do not read the clock on this one.** 422 ms against 399 ms is run-to-run noise. The number that
+moves is the **SE event count** — and on the presenter model it runs to **92 SE events** where a sane
+model needs a handful. That gap is the entire reason Module 7 teaches you to read the trace instead
+of the stopwatch.
+
+Why 92: the presenter copy declares `Sales[OrderDateKey] → Date[DateKey]` as **many-to-many**, even
+though the data is genuinely one-to-many. That single untrue claim removes the engine's licence to
+take the cheap path, so it resolves the relationship defensively, per group. Same data, same answer,
+same DAX — the model lied, and the trace shows the bill.
+
+> Two honest caveats. `DATESBETWEEN` only behaves here because `'Date'` is **marked as a date table**
+> (`dataCategory: Time` plus `isKey` on `Date[Date]`) — the builder does that for every model. And
+> attendee copies keep the correct one-to-many relationship, so **they will not reproduce 92 events**.
+> This one is a presenter demo.
+
 ### Step 3 — try a rewrite without touching the model
 
 This is where `DEFINE MEASURE` earns its place. Put your candidate next to the original so you can see
