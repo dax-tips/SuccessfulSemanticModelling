@@ -729,9 +729,9 @@ inconsistent TimeUnit associations in multiple calendar objects owned by table '
 
 ## Module 7 - diagnosing slow visuals
 
-Model: `07 Slow Visual Triage`. The queries are deliberately short — they call the model's own
-measures, listed below so the expensive logic is still visible. `DEFINE MEASURE` comes in at **step
-3**, where it belongs: trying a rewrite without writing it to the model.
+Model: `07 Slow Visual Triage`. This module is **one query, followed through end to end** — captured
+from a real visual, then improved twice: once by fixing the model, once by fixing the measure. The
+model's own measures are listed below so the expensive logic stays visible.
 
 The same queries run in three places, so nobody is locked out:
 
@@ -752,18 +752,23 @@ without writing any of them to it, and only commit the one that won.
 
 ### The loop
 
-1. **Grab a slow query** from the three below.
-2. **Run it in DAX Perf Optimizer** and read the split. Do not skip to fixing.
-3. **Define local versions of the measures** with `DEFINE MEASURE` and paste in your rewrite.
-4. **Re-run.** Same numbers, better split, or the rewrite is wrong.
-5. **Apply the winner back to the model** in the web editor, then run once more to confirm.
+1. **Capture a real query.** In the `07 Slow Visual` report turn on **Performance Analyzer**, refresh
+   the visuals, then **Copy query** from the matrix. That is the exact DAX the visual ran, not an
+   example someone wrote to make a point.
+2. **Run it in DAX Perf Optimizer** and read the split and the **SE event count**. Do not skip to
+   fixing.
+3. **Fix the model.** Re-run the same query, unchanged, and watch the event count collapse.
+4. **Then fix the measure.** Re-run once more. It comes down again, for a different reason.
+5. **Try rewrites without committing them** using `DEFINE MEASURE`, and only write the winner back.
 
-Steps 3 and 4 are the whole point: you can try five variants against the real model without writing
-any of them to it. Only step 5 changes anything, and by then you already know it works.
+Steps 3 and 4 are two different levers on the *same* query, and doing them one at a time is the only
+way to know what each was worth. Start from a query the report actually issued and you are tuning
+what your users wait for, rather than what you imagined they wait for.
 
 ### The measures already in the model
 
-All on the `Sales` table. Read these once and the queries below need no explanation.
+All on the `Sales` table. `[Total Sales]` is the fast baseline. The other three are deliberately slow
+in different ways and are the ones you diagnose in **lab07**.
 
 | Measure | Definition |
 |---|---|
@@ -781,56 +786,7 @@ Visual → DAX → model → source. Read the split **before** touching anything
 | **SE-bound** | scanning too much | model, missing aggregation, cardinality, file layout |
 | **FE-bound** | expensive measure logic | the DAX itself |
 
-### 1. FE-bound — the same answer, two ways
-
-```dax
-EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow Sales (FE)] )
-```
-
-Then the cheap one, which returns the identical number:
-
-```dax
-EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Total Sales] )
-```
-
-`CALCULATE` inside `SUMX ( VALUES ( ... ) )` forces a **context transition per order number**, about a
-million of them. The storage engine barely moves; the formula engine does all the work. No amount of
-model tuning fixes this one — only the DAX does.
-
-### 2. SE-bound — a row-level expression over the whole fact
-
-```dax
-EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow Sales (SE)] )
-```
-
-Three columns must be materialised for every row before anything can be summed. Watch the scan's
-**rows** and **KB**, not just the duration. The fix is a stored column computed upstream — this is a
-model problem wearing a DAX costume, which is the line the whole day opens on.
-
-> **Do not put this one beside `[Total Sales]` and call it the same answer.** It is not.
-> `[Slow Sales (SE)]` recomputes `Quantity * UnitPrice * ( 1 - Discount )` from components, while
-> `SalesAmount` is **stored rounded to 2dp**. Measured on this model: **575,871,342.02** against
-> **575,871,284.54**, out by £57.48 in total and up to £1.72 in a single month. That is a real
-> **difference, not floating-point noise. Recomputing a stored value is exactly how a "harmless"
-> rewrite quietly changes the number.**
-
-Query 1 is the one that survives a side-by-side. This one asks the same *question* by a different
-*calculation*, so treat it as a diagnosis exercise rather than a before-and-after.
-
-### 3. Cardinality — the Module 6 lesson, seen from the diagnosis side
-
-```dax
-EVALUATE
-SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Orders", [Order Count] )
-```
-
-SE-bound, and the cost tracks the **cardinality** of `OrderNumber`, not the row count. Same problem
-Module 6 solved by modelling; here the trace is what tells you to go and look.
-
-### 4. The model lever — a relationship that lies
+### The worked example — a relationship that lies
 
 Two ways to ask *how many territories transacted in the rolling 180 days*. They return **identical
 numbers on every row** — verified across all 72 months, zero mismatches.
@@ -888,7 +844,7 @@ and 2,100 scans collapse to 4.
 > `07 Slow Visual Triage` carries the same many-to-many relationship and the same two measures**, so
 > you can reproduce all of this yourself rather than watching it.
 
-### Step 3 — try a rewrite without touching the model
+### Step 5 — try a rewrite without committing it
 
 This is where `DEFINE MEASURE` earns its place. Put your candidate next to the original so you can see
 both the numbers agree and the split move, in one run:
@@ -913,8 +869,8 @@ SUMMARIZECOLUMNS (
 > gives a different floating-point tail. That is not your rewrite being wrong — compare to the cent,
 > not to the fifteenth digit.
 
-Iterate here as many times as you like. Nothing is written to the model until step 5, when you paste
-the winning expression into the measure you were fixing.
+Iterate here as many times as you like. Nothing is written to the model until you paste the winning
+expression into the measure you were fixing.
 
 ### What to land
 
