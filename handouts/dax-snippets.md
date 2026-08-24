@@ -763,20 +763,31 @@ SUMMARIZECOLUMNS (
 )
 ```
 
-**Do not read the clock on this one.** 422 ms against 399 ms is run-to-run noise. The number that
-moves is the **SE event count** — and on the presenter model it runs to **92 SE events** where a sane
-model needs a handful. That gap is the entire reason Module 7 teaches you to read the trace instead
-of the stopwatch.
+**Measured on the presenter model with the cache cleared before each run:**
 
-Why 92: the presenter copy declares `Sales[OrderDateKey] → Date[DateKey]` as **many-to-many**, even
+| | Duration | SE events |
+|---|---|---|
+| `[Distinct Territories]` | **15 s** | **2,100+** |
+| `[Distinct Territories (optimized)]` | **1.7 s** | **4** |
+
+**Roughly 9x on the clock and over 500x on the event count.** Identical numbers on every row —
+verified across all 72 months, zero mismatches.
+
+Why: the presenter copy declares `Sales[OrderDateKey] → Date[DateKey]` as **many-to-many**, even
 though the data is genuinely one-to-many. That single untrue claim removes the engine's licence to
-take the cheap path, so it resolves the relationship defensively, per group. Same data, same answer,
-same DAX — the model lied, and the trace shows the bill.
+take the cheap path, so it resolves the relationship defensively — and `FILTER ( ALL ( 'Date' ) )`
+then makes it do that once per group. `DATESBETWEEN` hands the engine one contiguous range instead,
+and 2,100 scans collapse to 4.
 
-> Two honest caveats. `DATESBETWEEN` only behaves here because `'Date'` is **marked as a date table**
+> **Clear the cache before every run, or you will measure nothing.** Warm, these two queries look
+> about 400 ms apart, which is noise — the second run is just reading the result cache. In DAX Studio
+> turn on **Clear Cache on Run**. This is the single most common way a benchmark lies to you, and it
+> is worth saying out loud in the room.
+
+> Two further caveats. `DATESBETWEEN` only behaves here because `'Date'` is **marked as a date table**
 > (`dataCategory: Time` plus `isKey` on `Date[Date]`) — the builder does that for every model. And
-> attendee copies keep the correct one-to-many relationship, so **they will not reproduce 92 events**.
-> This one is a presenter demo.
+> attendee copies keep the correct one-to-many relationship, so **they will not reproduce these
+> numbers**. This one is a presenter demo.
 
 ### Step 3 — try a rewrite without touching the model
 
