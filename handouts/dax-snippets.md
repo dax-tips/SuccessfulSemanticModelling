@@ -302,29 +302,33 @@ mechanism underneath it.
 Share of Category =
 DIVIDE (
     [Total Sales],
-    CALCULATE ( [Total Sales], ALLEXCEPT ( Product, Product[Category] ) )
+    CALCULATE ( [Total Sales], ALLEXCEPT ( 'Product', 'Product'[Category] ) )
 )
 ```
 
 Watch: `ALLEXCEPT` keeps `Category` and drops every other filter on `Product`. Swap it for `ALL` and
 the denominator becomes the whole model, which is the mistake people actually make.
 
+Watch: **the quotes around `'Product'` are not optional.** `PRODUCT` is a DAX function, so an
+unquoted `Product` is read as that function and the measure will not validate. Any table whose name
+collides with a function - `Product`, `Date`, `Calendar` - needs single quotes every time.
+
 ### 4. Ranking
 
 ```dax
 Product Rank =
-RANKX ( ALL ( Product[ProductName] ), [Total Sales],, DESC, DENSE )
+RANKX ( ALL ( 'Product'[ProductName] ), [Total Sales],, DESC, DENSE )
 ```
 
 ```dax
 Rank in Category =
 RANKX (
-    CALCULATETABLE ( VALUES ( Product[ProductName] ), ALLEXCEPT ( Product, Product[Category] ) ),
+    CALCULATETABLE ( VALUES ( 'Product'[ProductName] ), ALLEXCEPT ( 'Product', 'Product'[Category] ) ),
     [Total Sales],, DESC, DENSE
 )
 ```
 
-Watch: `RANKX` over `ALL(Product)` ranks against every column combination, not just the name. Rank
+Watch: `RANKX` over `ALL('Product')` ranks against every column combination, not just the name. Rank
 the **column** you are displaying.
 
 ### 5. Distinct count - leave this one last
