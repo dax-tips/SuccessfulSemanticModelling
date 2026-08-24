@@ -833,4 +833,96 @@ the winning expression into the measure you were fixing.
 - **The split must move, or the diagnosis was wrong.** Re-run after the fix and check.
 - **More on Thursday** — *Debug DAX like a PRO* takes this workflow properly, with time to spare.
 
+---
+
+## Module 9 - AI instructions for `01 Star Schema (fixed)`
+
+**Home ribbon → Prep data for AI → Add AI instructions → paste → Apply.** Three of the four tabs are
+optional; this is the one worth your seven minutes. Limit is 10,000 characters, it lives on the
+*semantic model* so every report over it benefits, and end users never see it.
+
+Not synonyms for one field — context for the whole model. Notice how much of it is just restating
+decisions made earlier today.
+
+```text
+## What this model is
+This is a retail sales model. One row of Sales is one order line, so a single
+order usually has several rows.
+Revenue, turnover, takings and sales all mean [Total Sales].
+
+## Always answer with a measure
+Every column on the Sales table is hidden on purpose, because the measures do
+that work. Do not sum or count a raw Sales column - use the measures:
+- [Total Sales] is revenue.
+- [Total Cost] is cost of goods.
+- [Margin] is [Total Sales] minus [Total Cost], as a currency amount, not a
+  percentage. If someone asks for margin %, divide [Margin] by [Total Sales].
+- [Order Count] is DISTINCT orders, not order lines.
+- [Total Quantity] is units sold.
+
+## Dates
+'Date' is the only date table. Use 'Date'[Date] for anything time-based.
+Sales are dated by ORDER date. A ship date exists but is deliberately inactive -
+only use it if the user explicitly asks about shipping or delivery.
+The fiscal year starts in July. If the user says "fiscal", use
+'Date'[FiscalYear] and 'Date'[FiscalQuarter], never 'Date'[Year] or
+'Date'[Quarter], because a calendar year straddles two fiscal years.
+
+## How to slice
+"Where" questions: break down by 'Territory'[Region].
+"What sold" questions: use 'Product'[Category], or 'Product'[Brand] for brand.
+"Who" questions: use 'Customer'[City] unless asked for a specific customer.
+For "top" products or customers, rank by [Total Sales] and return the top 10
+unless the user asks for a different number or measure.
+```
+
+**Then test it.** Ask Copilot *"how were takings tracking against last fiscal year?"* — without the
+instructions it has to guess what takings means and which year column to use. With them, it should
+reach for `[Total Sales]` and `'Date'[FiscalYear]`.
+
+### Writing your own
+
+- **Be explicit.** Assume it knows nothing about your business.
+- **Group by theme** with headers, as above. It reads them the way a person would.
+- **Few and focused beats many and broad** — conflicting instructions confuse a model as much as they
+  would confuse a new starter.
+- **They are guidance, not rules.** The model interprets them; there is no guarantee it obeys.
+
+### Where they actually go — verified 24 Aug
+
+Open the **TMDL view** before and after you press Apply. Measured on this model:
+
+```
+model Model
+  cultureInfo en-US
+    linguisticMetadata =        <-- a JSON blob
+      { "Version": ..., "Language": "en-US", "Entities": {...},
+        "Phrasings": [...], "Agents": {...},
+        "CustomInstructions": "## What this model is\n..." }
+```
+
+| | Before | After |
+|---|---|---|
+| `Version` | `1.0.0` | `4.2.0` |
+| `Entities` | absent | generated, `"State":"Generated"`, `"Weight":0.99` |
+| `Phrasings` | absent | generated, e.g. `sale_has_territory` |
+| `Agents` | absent | `{"Internal":{"Version":"1.1.0"}}` |
+| `CustomInstructions` | absent | your text, `\n`-escaped |
+
+**Apply does more than store your prose — it builds the whole linguistic schema.** That is exactly why
+Q&A has to be on first: the instructions are a passenger inside the Q&A metadata, and with no
+`linguisticMetadata` there is nowhere to put them.
+
+Four things follow:
+
+1. **It is source-controllable.** It lives in the model definition, so it survives a TMDL/TMSL export
+   and lands in git like anything else.
+2. **It is culture-scoped.** A multi-language model needs it once per `cultureInfo`, not once per model.
+3. **It is scriptable**, so a build script can ship every model with instructions already set rather
+   than asking each person to paste them.
+4. ⚠️ **A redeploy will silently wipe it.** Push a `.bim` or TMDL that does not carry this block and the
+   instructions are gone, with no error. Same failure shape as every other case today where source and
+   deployed model drifted apart — and worth saying out loud, because "AI-ready" metadata that a routine
+   deployment deletes is the kind of thing teams find out about months later.
+
 
