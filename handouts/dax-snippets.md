@@ -492,6 +492,75 @@ Two things to know before running these:
   directly instead, which needs no aggregation machinery and cannot be muddied by a rewrite that did
   or did not match.
 
+### 6. All of them at once
+
+Once the measures above are in the model, this is the query that puts them side by side. Paste it
+straight into **DAX query view**.
+
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[MonthYearSort],
+    'Date'[MonthYear],
+    "Sales",              [Total Sales],
+    "Cost",               [Total Cost],
+    "Margin",             [Margin],
+    "Quantity",           [Total Quantity],
+    "Orders",             [Order Count],
+    "Sales LY",           [Sales LY],
+    "YoY %",              [Sales YoY %],
+    "Shipped",            [Sales by Ship Date],
+    "YTD",                [Sales YTD],
+    "Running total",      [Sales Running Total],
+    "Orders (distinct)",  [Orders (distinct)],
+    "Orders (countrows)", [Orders (countrows)],
+    "Orders (approx)",    [Orders (approx)]
+)
+ORDER BY 'Date'[MonthYearSort]
+```
+
+What the numbers should do:
+
+- `Sales LY` and `YoY %` are **blank for the first twelve months**. There is no prior year to shift
+  back to. That is correct, not a broken measure.
+- `Shipped` lags `Sales` around month boundaries, but the two **grand totals match** - same rows,
+  different date attribution.
+- `YTD` resets every January. `Running total` never resets. Put them next to each other and the
+  difference between "to date" and "cumulative" stops needing a definition.
+- The three `Orders` columns **agree on every row**. Same answer, three different costs, which is the
+  whole of pattern 5.
+
+**Three measures are deliberately not in that query.** `Share of Category`, `Product Rank` and
+`Rank in Category` need a product filter before they mean anything. Grouped by month alone,
+`ALLEXCEPT` has nothing left to remove, so the share is **100%** and both ranks are **1** on every
+single row - not an error, just a measure asked a question at the wrong grain. Give them the grain
+they were written for:
+
+```dax
+EVALUATE
+SUMMARIZECOLUMNS (
+    'Date'[MonthYearSort],
+    'Date'[MonthYear],
+    'Product'[Category],
+    'Product'[ProductName],
+    "Sales",             [Total Sales],
+    "Share of Category", [Share of Category],
+    "Product Rank",      [Product Rank],
+    "Rank in Category",  [Rank in Category]
+)
+ORDER BY 'Date'[MonthYearSort], 'Product'[Category], 'Product'[ProductName]
+```
+
+Now `Share of Category` sums to 100% within each category and month, and the two ranks disagree with
+each other - `Product Rank` is against every product, `Rank in Category` only against its siblings.
+
+That returns a row per product per month, so it is a big result. To read it comfortably, pin it to
+one month by adding a filter argument:
+
+```dax
+    TREATAS ( { 202601 }, 'Date'[MonthYearSort] ),
+```
+
 ---
 
 ## Module 6 - the Calendar feature
