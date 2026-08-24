@@ -341,11 +341,7 @@ Orders (distinct) = DISTINCTCOUNT ( Sales[OrderNumber] )
 Orders (countrows) = COUNTROWS ( VALUES ( Sales[OrderNumber] ) )
 ```
 
-```dax
-Orders (approx) = APPROXIMATEDISTINCTCOUNT ( Sales[OrderNumber] )
-```
-
-All three answer the same question on this data. The teaching points:
+Both answer the same question on this data. The teaching points:
 
 - `COUNTROWS ( VALUES ( ... ) )` is **not** the cheaper option people assume it is. The engine rewrites
   it to the same distinct count under the covers, so you get the same plan and the same cost. The only
@@ -355,9 +351,10 @@ All three answer the same question on this data. The teaching points:
   already holds one row per order is a row count, not a distinct operation, which is a different class
   of work entirely. That is a modelling change rather than a measure change. See
   [Use COUNTROWS for distinct counts](https://dax.tips/2026/08/07/distinctcount-into-countrows/).
-- `APPROXIMATEDISTINCTCOUNT` trades exactness for speed. Legitimate on a high-cardinality column feeding
-  a headline tile that nobody reconciles to the penny. Not legitimate on anything a finance team signs.
-- Note the function is `APPROXIMATEDISTINCTCOUNT`, not `APPROXDISTINCTCOUNT`.
+- **`APPROXIMATEDISTINCTCOUNT` is not on this list, and that is the point.** It is unsupported in
+  **Direct Lake**, so it will not work on your model at all. It trades exactness for speed and is
+  legitimate on a headline tile nobody reconciles to the penny, never on anything a finance team
+  signs - but you would need an Import or DirectQuery fact before you could even try it.
 
 `Sales[OrderNumber]` is drawn from 1,000,000 possible order numbers across 3M rows, so roughly **1M
 distinct**, about three lines per order. Enough cardinality that the difference is measurable rather
@@ -513,8 +510,7 @@ SUMMARIZECOLUMNS (
     "YTD",                [Sales YTD],
     "Running total",      [Sales Running Total],
     "Orders (distinct)",  [Orders (distinct)],
-    "Orders (countrows)", [Orders (countrows)],
-    "Orders (approx)",    [Orders (approx)]
+    "Orders (countrows)", [Orders (countrows)]
 )
 ORDER BY 'Date'[MonthYearSort]
 ```
@@ -527,8 +523,8 @@ What the numbers should do:
   different date attribution.
 - `YTD` resets every January. `Running total` never resets. Put them next to each other and the
   difference between "to date" and "cumulative" stops needing a definition.
-- The three `Orders` columns **agree on every row**. Same answer, three different costs, which is the
-  whole of pattern 5.
+- The two `Orders` columns **agree on every row**. Same answer, same cost, which is the whole of
+  pattern 5: the saving is not in the function you pick, it is in not asking for a distinct count.
 
 **Three measures are deliberately not in that query.** `Share of Category`, `Product Rank` and
 `Rank in Category` need a product filter before they mean anything. Grouped by month alone,
