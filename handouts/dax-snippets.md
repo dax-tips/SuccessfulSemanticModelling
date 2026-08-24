@@ -625,3 +625,87 @@ A column must carry the **same time unit in every calendar on the table**. Mappi
 `Month` in one calendar and `MonthOfYear` in another is rejected on commit with "a column has
 inconsistent TimeUnit associations in multiple calendar objects owned by table 'Date'".
 
+---
+
+## Module 7 - diagnosing slow visuals
+
+Model: `07 Slow Visual Triage`. Everything below uses `DEFINE MEASURE`, so the expensive logic is
+**on screen in the query** rather than hidden in the model. Nobody has to take your word for what
+makes it slow.
+
+The same queries run in two places:
+
+- **DAX Studio**, Server Timings on, **Clear Cache on Run** — the full trace: every scan, the xmSQL,
+  rows and KB
+- **`lab07-diagnose-slow-visuals`**, via `measure ( dax, "label" )` — the browser version, prints the
+  SE/FE split and needs nothing installed
+
+The model also carries `[Slow Sales (FE)]` and `[Slow Sales (SE)]` already, if you would rather call
+them than redefine them.
+
+### The triage order
+
+Visual → DAX → model → source. Read the split **before** touching anything.
+
+| Split | Means | Look at |
+|---|---|---|
+| **SE-bound** | scanning too much | model, missing aggregation, cardinality, file layout |
+| **FE-bound** | expensive measure logic | the DAX itself |
+
+### 1. FE-bound — the same answer, two ways
+
+```dax
+DEFINE
+    MEASURE Sales[Slow (FE)] =
+        SUMX ( VALUES ( Sales[OrderNumber] ), CALCULATE ( SUM ( Sales[SalesAmount] ) ) )
+EVALUATE
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow (FE)] )
+```
+
+Then the cheap one, which returns the identical number:
+
+```dax
+DEFINE
+    MEASURE Sales[Fast] = SUM ( Sales[SalesAmount] )
+EVALUATE
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Fast] )
+```
+
+`CALCULATE` inside `SUMX ( VALUES ( ... ) )` forces a **context transition per order number**, about a
+million of them. The storage engine barely moves; the formula engine does all the work. No amount of
+model tuning fixes this one — only the DAX does.
+
+### 2. SE-bound — a row-level expression over the whole fact
+
+```dax
+DEFINE
+    MEASURE Sales[Slow (SE)] =
+        SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] * ( 1 - Sales[Discount] ) )
+EVALUATE
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Sales", [Slow (SE)] )
+```
+
+Three columns must be materialised for every row before anything can be summed. Watch the scan's
+**rows** and **KB**, not just the duration. The fix is a stored column computed upstream — this is a
+model problem wearing a DAX costume, which is the line the whole day opens on.
+
+### 3. Cardinality — the Module 6 lesson, seen from the diagnosis side
+
+```dax
+DEFINE
+    MEASURE Sales[Orders] = DISTINCTCOUNT ( Sales[OrderNumber] )
+EVALUATE
+SUMMARIZECOLUMNS ( 'Date'[MonthYear], "Orders", [Orders] )
+```
+
+SE-bound, and the cost tracks the **cardinality** of `OrderNumber`, not the row count. Same problem
+Module 6 solved by modelling; here the trace is what tells you to go and look.
+
+### What to land
+
+- **Classify before you act.** Anyone rewriting DAX on an SE-bound query is tuning the wrong layer,
+  and that mistake is the teachable moment, not a failure.
+- **The split must move, or the diagnosis was wrong.** Re-run after the fix and check.
+- **More on Thursday** — *Debug DAX like a PRO* takes this workflow properly, with time to spare.
+
+
