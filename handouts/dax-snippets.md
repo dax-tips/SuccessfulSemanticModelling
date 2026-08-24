@@ -653,6 +653,17 @@ without writing any of them to it, and only commit the one that won.
 The model also carries `[Slow Sales (FE)]` and `[Slow Sales (SE)]` already, if you would rather call
 them than redefine them.
 
+### The loop
+
+1. **Grab a slow query** from the three below.
+2. **Run it in DAX Perf Optimizer** and read the split. Do not skip to fixing.
+3. **Define local versions of the measures** with `DEFINE MEASURE` and paste in your rewrite.
+4. **Re-run.** Same numbers, better split, or the rewrite is wrong.
+5. **Apply the winner back to the model** in the web editor, then run once more to confirm.
+
+Steps 3 and 4 are the whole point: you can try five variants against the real model without writing
+any of them to it. Only step 5 changes anything, and by then you already know it works.
+
 ### The triage order
 
 Visual → DAX → model → source. Read the split **before** touching anything.
