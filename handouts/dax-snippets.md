@@ -1,20 +1,25 @@
-# DAX snippets, master copy
+# DAX snippets
 
-Paste these into the shared login spreadsheet so attendees can copy them without typing.
-**This file is the master.** If a cell in the spreadsheet gets edited or mangled during the day,
-re-copy from here rather than trying to repair it live.
+Everything you need to copy and paste today, so you are never retyping DAX while the rest of the room
+moves on. The same snippets are in the shared login spreadsheet; this page is the master, so if a
+cell in the spreadsheet looks mangled, take it from here instead.
 
-Written against the models `0-create-lab-models` builds, so table and column names are the real ones:
-`Sales`, `Product`, `Customer`, `Territory`, `Date`, and the measures `Total Sales`, `Total Cost`,
-`Total Quantity`, `Margin`, `Order Count`. `Date` is already marked as a date table.
+It is written against the models `0-create-lab-models` built in your own workspace, so the table and
+column names are the real ones you will see: `Sales`, `Product`, `Customer`, `Territory`, `Date`, and
+the measures `Total Sales`, `Total Cost`, `Total Quantity`, `Margin` and `Order Count`. `Date` is
+already marked as a date table, so time intelligence just works.
+
+The prose around each snippet is there to tell you what to look for when you run it. If you only read
+one part of any section, read the bit that says what the numbers should do.
 
 ---
 
 ## Module 4 - scaling techniques
 
-Three levers, three presenter models. **You can run every query below in your own DAX Perf
-Optimizer notebook**, but tracing needs admin on the model, and you are Viewer on the presenter's
-workspace. So levers 1 and 2 are watch-along, and the last query in lever 3 runs on your own model.
+Three levers, three models you do not own. **You can run every query below in your own DAX Perf
+Optimizer notebook**, but tracing needs admin rights on the model and you are only a Viewer on the
+presenter's workspace. So levers 1 and 2 are watch-along, and the last query in lever 3 runs against
+your own model.
 
 Read the **Trace details** grid, not the clock.
 
@@ -99,8 +104,9 @@ SUMMARIZECOLUMNS (
 )
 ```
 
-**2c. History.** Same column as 2a, opposite direction. The query really does need the cold half.
-Expect **SQL rows**. Correct behaviour, and worth saying out loud before someone reads it as a fault.
+**2c. History.** Same column as 2a, opposite direction. This query really does need the cold half, so
+expect to see **SQL rows** appear. That is correct behaviour, not a fault — you have asked for data
+that only lives in the DirectQuery partition, so it goes and gets it.
 
 ```dax
 EVALUATE
@@ -372,9 +378,9 @@ never sees a slicer on the product dimension — only `ISCROSSFILTERED ( 'produc
 all cross-filter the fact legitimately and the fast path would never run. Validation 2 proves both
 halves hold.
 
-**The demo query — one query, four toggles.** Everything in the module comes off this one. Comment
-lines in and out live, so the room watches Server Timings change shape rather than four separate
-queries scroll past.
+**The demo query — one query, four toggles.** Everything in this module comes off this one. Comment the
+lines in and out as you go, so you watch Server Timings change shape rather than four separate queries
+scrolling past.
 
 ```dax
 EVALUATE
@@ -458,9 +464,10 @@ test from one column to the whole table closes it, verified against `Quantity`, 
 
 Two things to know before running these:
 
-- **Only the `"Actual"` toggle hits the 100M DirectQuery table**, and so does Validation 1. With ~53
-  people in the room, demo those from the front or stagger them. Everything else reads the 5M Import
-  aggregate and is cheap enough to run all at once.
+- **Only the `"Actual"` toggle hits the 100M DirectQuery table**, and so does Validation 1. If the
+  whole room runs those at the same moment you will all be queuing behind each other, so watch those
+  two from the front unless you are told otherwise. Everything else reads the 5M Import aggregate and
+  is cheap enough to run whenever you like.
 - **This model deliberately has no `alternateOf` aggregation mapping.** `"Actual"` therefore always
   goes to the 100M detail as a SQL event. The `"Other"` column makes the DCOUNT-vs-COUNTROWS point
   directly instead, which needs no aggregation machinery and cannot be muddied by a rewrite that did
@@ -509,7 +516,7 @@ CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Gregorian' ) )
 CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( Fiscal ) )
 ```
 
-Worth keeping calendar names free of spaces so attendees never have to think about the quoting.
+Keep calendar names free of spaces and you never have to think about the quoting.
 
 Existing measures are untouched. `SAMEPERIODLASTYEAR ( 'Date'[Date] )` still works exactly as before,
 with two calendars defined, and returns classic results. Calendar time intelligence is **opt-in per
@@ -615,7 +622,7 @@ columns and all time related columns", so the primary is the column being shifte
 
 ### Verifying a calendar landed, with no tooling
 
-Two DMVs, both confirmed working, so attendees can check their own work without Tabular Editor:
+Two DMVs, both confirmed working, so you can check your own work without Tabular Editor:
 
 ```
 SELECT * FROM $SYSTEM.TMSCHEMA_CALENDARS
@@ -646,9 +653,9 @@ The same queries run in three places, so nobody is locked out:
 
 | Tool | Who | Gives you |
 |---|---|---|
-| **DAX Studio**, Server Timings + *Clear Cache on Run* | presenter | the full trace: every scan, the xmSQL, rows and KB |
-| **DAX Perf Optimizer** notebook | attendees, browser | paste a `DEFINE` version of a measure, iterate on it locally, then paste the winner back into the model |
-| **`lab07-diagnose-slow-visuals`** via `measure ( dax, "label" )` | attendees, browser | the SE/FE split, nothing to install |
+| **DAX Studio**, Server Timings + *Clear Cache on Run* | presenter only | the full trace: every scan, the xmSQL, rows and KB |
+| **DAX Perf Optimizer** notebook | you, in the browser | paste a `DEFINE` version of a measure, iterate on it locally, then paste the winner back into the model |
+| **`lab07-diagnose-slow-visuals`** via `measure ( dax, "label" )` | you, in the browser | the SE/FE split, nothing to install |
 
 `DEFINE MEASURE` is what makes this work as a loop: you can try five variants against the real model
 without writing any of them to it, and only commit the one that won.
@@ -723,8 +730,8 @@ model problem wearing a DAX costume, which is the line the whole day opens on.
 > `[Slow Sales (SE)]` recomputes `Quantity * UnitPrice * ( 1 - Discount )` from components, while
 > `SalesAmount` is **stored rounded to 2dp**. Measured on this model: **575,871,342.02** against
 > **575,871,284.54**, out by £57.48 in total and up to £1.72 in a single month. That is a real
-> difference, not floating-point noise, and it is worth saying out loud — recomputing a stored
-> value is exactly how a "harmless" rewrite changes the number.
+> **difference, not floating-point noise. Recomputing a stored value is exactly how a "harmless"
+> rewrite quietly changes the number.**
 
 Query 1 is the one that survives a side-by-side. This one asks the same *question* by a different
 *calculation*, so treat it as a diagnosis exercise rather than a before-and-after.
@@ -772,7 +779,7 @@ SUMMARIZECOLUMNS (
 )
 ```
 
-**Measured on the presenter model with the cache cleared before each run:**
+**Measured with the cache cleared before each run:**
 
 | | Duration | SE events |
 |---|---|---|
@@ -782,7 +789,7 @@ SUMMARIZECOLUMNS (
 **Roughly 9x on the clock and over 500x on the event count.** Identical numbers on every row —
 verified across all 72 months, zero mismatches.
 
-Why: the presenter copy declares `Sales[OrderDateKey] → Date[DateKey]` as **many-to-many**, even
+Why: `07 Slow Visual Triage` declares `Sales[OrderDateKey] → Date[DateKey]` as **many-to-many**, even
 though the data is genuinely one-to-many. That single untrue claim removes the engine's licence to
 take the cheap path, so it resolves the relationship defensively — and `FILTER ( ALL ( 'Date' ) )`
 then makes it do that once per group. `DATESBETWEEN` hands the engine one contiguous range instead,
@@ -790,13 +797,12 @@ and 2,100 scans collapse to 4.
 
 > **Clear the cache before every run, or you will measure nothing.** Warm, these two queries look
 > about 400 ms apart, which is noise — the second run is just reading the result cache. In DAX Studio
-> turn on **Clear Cache on Run**. This is the single most common way a benchmark lies to you, and it
-> is worth saying out loud in the room.
+> turn on **Clear Cache on Run**. This is the single most common way a benchmark lies to you.
 
-> Two further caveats. `DATESBETWEEN` only behaves here because `'Date'` is **marked as a date table**
-> (`dataCategory: Time` plus `isKey` on `Date[Date]`) — the builder does that for every model. And
-> attendee copies keep the correct one-to-many relationship, so **they will not reproduce these
-> numbers**. This one is a presenter demo.
+> `DATESBETWEEN` only behaves here because `'Date'` is **marked as a date table** (`dataCategory: Time`
+> plus `isKey` on `Date[Date]`), which the builder does for every model. **Your own copy of
+> `07 Slow Visual Triage` carries the same many-to-many relationship and the same two measures**, so
+> you can reproduce all of this yourself rather than watching it.
 
 ### Step 3 — try a rewrite without touching the model
 
@@ -921,8 +927,8 @@ Four things follow:
 3. **It is scriptable**, so a build script can ship every model with instructions already set rather
    than asking each person to paste them.
 4. ⚠️ **A redeploy will silently wipe it.** Push a `.bim` or TMDL that does not carry this block and the
-   instructions are gone, with no error. Same failure shape as every other case today where source and
-   deployed model drifted apart — and worth saying out loud, because "AI-ready" metadata that a routine
+   instructions are gone, with no error. Same failure shape as every other case where source and
+   deployed model drift apart — and worth knowing, because "AI-ready" metadata that a routine
    deployment deletes is the kind of thing teams find out about months later.
 
 
