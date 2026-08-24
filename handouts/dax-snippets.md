@@ -633,12 +633,22 @@ Model: `07 Slow Visual Triage`. Everything below uses `DEFINE MEASURE`, so the e
 **on screen in the query** rather than hidden in the model. Nobody has to take your word for what
 makes it slow.
 
-The same queries run in two places:
+The same queries run in three places, so nobody is locked out:
 
-- **DAX Studio**, Server Timings on, **Clear Cache on Run** — the full trace: every scan, the xmSQL,
-  rows and KB
-- **`lab07-diagnose-slow-visuals`**, via `measure ( dax, "label" )` — the browser version, prints the
-  SE/FE split and needs nothing installed
+| Tool | Who | Gives you |
+|---|---|---|
+| **DAX Studio**, Server Timings + *Clear Cache on Run* | presenter | the full trace: every scan, the xmSQL, rows and KB |
+| **DAX Perf Optimizer** notebook | attendees, browser | paste a `DEFINE` version of a measure, iterate on it locally, then paste the winner back into the model |
+| **`lab07-diagnose-slow-visuals`** via `measure ( dax, "label" )` | attendees, browser | the SE/FE split, nothing to install |
+
+`DEFINE MEASURE` is what makes this work as a loop: you can try five variants against the real model
+without writing any of them to it, and only commit the one that won.
+
+> **DAX Perf Optimizer is a Python notebook, not PySpark**, so there is no Spark session to wait for.
+> Run the `%pip` cell **alone and first** — in Fabric it restarts the interpreter, so anything defined
+> before it is lost. It installs a patched build of semantic-link-labs from the workshop repo, which
+> adds the `AggregateTableRewriteQuery` trace event, so it can show *why* an aggregation missed rather
+> than only that it did.
 
 The model also carries `[Slow Sales (FE)]` and `[Slow Sales (SE)]` already, if you would rather call
 them than redefine them.
