@@ -710,6 +710,16 @@ Three columns must be materialised for every row before anything can be summed. 
 **rows** and **KB**, not just the duration. The fix is a stored column computed upstream — this is a
 model problem wearing a DAX costume, which is the line the whole day opens on.
 
+> **Do not put this one beside `[Total Sales]` and call it the same answer.** It is not.
+> `[Slow Sales (SE)]` recomputes `Quantity * UnitPrice * ( 1 - Discount )` from components, while
+> `SalesAmount` is **stored rounded to 2dp**. Measured on this model: **575,871,342.02** against
+> **575,871,284.54**, out by £57.48 in total and up to £1.72 in a single month. That is a real
+> difference, not floating-point noise, and it is worth saying out loud — recomputing a stored
+> value is exactly how a "harmless" rewrite changes the number.
+
+Query 1 is the one that survives a side-by-side. This one asks the same *question* by a different
+*calculation*, so treat it as a diagnosis exercise rather than a before-and-after.
+
 ### 3. Cardinality — the Module 6 lesson, seen from the diagnosis side
 
 ```dax
